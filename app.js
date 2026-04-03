@@ -131,7 +131,7 @@ async function subscribeToPush() {
         const registration = await navigator.serviceWorker.ready;
         const subscription = await registration.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array('BGXQkZ8F3qYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqYqRqY')
+            applicationServerKey: urlBase64ToUint8Array('BJWbEeWAwNSIryb0VkveOtd9s-eDeJg5ni9eeaiukQQPqOTQxmJookJGDVCVvR00qc5_iG2AAkx1XtXsWftrBB0')
         });
         await fetch('http://localhost:3001/subscribe', {
             method: 'POST',

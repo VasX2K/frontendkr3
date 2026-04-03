@@ -6,14 +6,13 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
 
-// VAPID-ключи — замените на свои, сгенерированные через: npx web-push generate-vapid-keys
 const vapidKeys = {
-    publicKey: 'ВАШ_ПУБЛИЧНЫЙ_VAPID_КЛЮЧ',
-    privateKey: 'ВАШ_ПРИВАТНЫЙ_VAPID_КЛЮЧ'
+    publicKey: 'BJWbEeWAwNSIryb0VkveOtd9s-eDeJg5ni9eeaiukQQPqOTQxmJookJGDVCVvR00qc5_iG2AAkx1XtXsWftrBB0',
+    privateKey: 'dIxqZ7rImj3jxQP5bgycw5iZorOcYIpk8sPBcE-Chvw'
 };
 
 webpush.setVapidDetails(
-    'mailto:your-email@example.com',
+    'mailto:test@example.com',
     vapidKeys.publicKey,
     vapidKeys.privateKey
 );
