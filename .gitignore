@@ -1,4 +1,7 @@
 node_modules/
-*.pem
+server/node_modules/
+server/.env
+server/certs/
 *.log
 .DS_Store
+Thumbs.db

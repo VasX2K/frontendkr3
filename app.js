@@ -1,225 +1,162 @@
-// Подключение к серверу Socket.IO
-const socket = io('http://localhost:3001');
+let tasks=JSON.parse(localStorage.getItem('tasks')||'[]');
+let deferredPrompt=null;
+const socket=io({reconnection:true});
+const $=id=>document.getElementById(id);
 
-// Элементы навигации
-const contentDiv = document.getElementById('app-content');
-const homeBtn = document.getElementById('home-btn');
-const aboutBtn = document.getElementById('about-btn');
+function setPushStatus(text){$('pushStatus').textContent=text}
 
-function setActiveButton(activeId) {
-    [homeBtn, aboutBtn].forEach(btn => btn.classList.remove('active'));
-    document.getElementById(activeId).classList.add('active');
+function saveLocal(){
+  localStorage.setItem('tasks',JSON.stringify(tasks));
 }
 
-async function loadContent(page) {
-    try {
-        const response = await fetch(`/content/${page}.html`);
-        const html = await response.text();
-        contentDiv.innerHTML = html;
-
-        // Если загружена главная страница, инициализируем функционал заметок
-        if (page === 'home') {
-            initNotes();
-        }
-    } catch (err) {
-        contentDiv.innerHTML = `<p class="is-center text-error">Ошибка загрузки страницы.</p>`;
-        console.error(err);
-    }
+function sync(){
+  saveLocal();
+  render();
+  socket.emit('tasks:update',tasks);
 }
 
-homeBtn.addEventListener('click', () => {
-    setActiveButton('home-btn');
-    loadContent('home');
+function render(){
+  $('taskList').innerHTML='';
+  tasks.forEach((task,index)=>{
+    const li=document.createElement('li');
+    if(task.done)li.className='done';
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';
+    checkbox.checked=task.done;
+    const span=document.createElement('span');
+    span.textContent=task.text;
+    const del=document.createElement('button');
+    del.textContent='Удалить';
+    del.className='danger';
+    checkbox.onchange=()=>{tasks[index].done=checkbox.checked;sync()};
+    del.onclick=()=>{tasks.splice(index,1);sync()};
+    li.append(checkbox,span,del);
+    $('taskList').appendChild(li);
+  });
+  const done=tasks.filter(t=>t.done).length;
+  $('stats').textContent=`Всего: ${tasks.length} Выполнено: ${done} Осталось: ${tasks.length-done}`;
+}
+
+$('taskForm').onsubmit=event=>{
+  event.preventDefault();
+  const text=$('taskInput').value.trim();
+  if(!text)return;
+  tasks.push({text,done:false});
+  $('taskInput').value='';
+  sync();
+};
+
+$('clearDone').onclick=()=>{
+  tasks=tasks.filter(t=>!t.done);
+  sync();
+};
+
+socket.on('tasks:sync',serverTasks=>{
+  tasks=serverTasks;
+  saveLocal();
+  render();
 });
 
-aboutBtn.addEventListener('click', () => {
-    setActiveButton('about-btn');
-    loadContent('about');
+function updateNetwork(){
+  $('netStatus').textContent=navigator.onLine?'Онлайн':'Офлайн';
+}
+addEventListener('online',updateNetwork);
+addEventListener('offline',updateNetwork);
+updateNetwork();
+
+addEventListener('beforeinstallprompt',event=>{
+  event.preventDefault();
+  deferredPrompt=event;
+  $('installBtn').hidden=false;
 });
 
-// Загружаем главную страницу при старте
-loadContent('home');
+$('installBtn').onclick=async()=>{
+  if(!deferredPrompt)return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt=null;
+  $('installBtn').hidden=true;
+};
 
-// Функционал заметок (localStorage)
-function initNotes() {
-    const form = document.getElementById('note-form');
-    const input = document.getElementById('note-input');
-    const reminderForm = document.getElementById('reminder-form');
-    const reminderText = document.getElementById('reminder-text');
-    const reminderTime = document.getElementById('reminder-time');
-    const list = document.getElementById('notes-list');
+async function registerSW(){
+  if(!('serviceWorker' in navigator)){
+    setPushStatus('Service Worker не поддерживается');
+    return null;
+  }
+  return navigator.serviceWorker.register('/sw.js');
+}
 
-    function loadNotes() {
-        const notes = JSON.parse(localStorage.getItem('notes') || '[]');
-        list.innerHTML = notes.map(note => {
-            let reminderInfo = '';
-            if (note.reminder) {
-                const date = new Date(note.reminder);
-                reminderInfo = `<br><small>!!! Напоминание: ${date.toLocaleString()}</small>`;
-            }
-            return `<li class="card" style="margin-bottom: 0.5rem; padding: 0.5rem;">
-                        ${note.text}${reminderInfo}
-                     </li>`;
-        }).join('');
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  const output=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)output[i]=raw.charCodeAt(i);
+  return output;
+}
+
+async function subscribePush(){
+  try{
+    const reg=await registerSW();
+    if(!reg)return;
+    if(!('PushManager' in window)){
+      setPushStatus('Push не поддерживается этим браузером');
+      return;
     }
-
-    function addNote(text, reminderTimestamp = null) {
-        const notes = JSON.parse(localStorage.getItem('notes') || '[]');
-        const newNote = { id: Date.now(), text, reminder: reminderTimestamp };
-        notes.push(newNote);
-        localStorage.setItem('notes', JSON.stringify(notes));
-        loadNotes();
-
-        // Отправляем событие на сервер
-        if (reminderTimestamp) {
-            socket.emit('newReminder', {
-                id: newNote.id,
-                text: text,
-                reminderTime: reminderTimestamp
-            });
-        } else {
-            socket.emit('newTask', { text, timestamp: Date.now() });
-        }
+    const permission=await Notification.requestPermission();
+    if(permission!=='granted'){
+      setPushStatus('Разрешение на уведомления не выдано');
+      return;
     }
-
-    // Обработка обычной заметки
-    form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const text = input.value.trim();
-        if (text) {
-            addNote(text);
-            input.value = '';
-        }
+    const key=await fetch('/api/push/vapid-public-key').then(r=>r.text());
+    const sub=await reg.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:urlBase64ToUint8Array(key)
     });
-
-    // Обработка заметки с напоминанием
-    reminderForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const text = reminderText.value.trim();
-        const datetime = reminderTime.value;
-        if (text && datetime) {
-            const timestamp = new Date(datetime).getTime();
-            if (timestamp > Date.now()) {
-                addNote(text, timestamp);
-                reminderText.value = '';
-                reminderTime.value = '';
-            } else {
-                alert('Дата напоминания должна быть в будущем');
-            }
-        }
+    await fetch('/api/push/subscribe',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(sub)
     });
-
-    loadNotes();
+    setPushStatus('Уведомления включены');
+  }catch(e){
+    setPushStatus('Ошибка подписки: '+e.message);
+  }
 }
 
-// Преобразование VAPID-ключа
-function urlBase64ToUint8Array(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-        outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-}
+$('subscribeBtn').onclick=subscribePush;
 
-// Подписка на push-уведомления
-async function subscribeToPush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    try {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array('BJWbEeWAwNSIryb0VkveOtd9s-eDeJg5ni9eeaiukQQPqOTQxmJookJGDVCVvR00qc5_iG2AAkx1XtXsWftrBB0')
-        });
-        await fetch('http://localhost:3001/subscribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(subscription)
-        });
-        console.log('Подписка на push отправлена');
-    } catch (err) {
-        console.error('Ошибка подписки на push:', err);
-    }
-}
+$('pushBtn').onclick=async()=>{
+  await subscribePush();
+  const r=await fetch('/api/push/test',{method:'POST'});
+  const data=await r.json();
+  setPushStatus(data.ok?'Тестовое уведомление отправлено':data.error||'Ошибка отправки');
+};
 
-// Отписка от push-уведомлений
-async function unsubscribeFromPush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    try {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) {
-            await fetch('http://localhost:3001/unsubscribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ endpoint: subscription.endpoint })
-            });
-            await subscription.unsubscribe();
-            console.log('Отписка выполнена');
-        }
-    } catch (err) {
-        console.error('Ошибка отписки:', err);
-    }
-}
+$('reminderForm').onsubmit=async event=>{
+  event.preventDefault();
+  await subscribePush();
+  const delaySeconds=Number($('delayInput').value||10);
+  const r=await fetch('/api/reminders/schedule',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:'Напоминание',body:`Прошло ${delaySeconds} сек.`,delaySeconds})
+  });
+  const data=await r.json();
+  setPushStatus(data.ok?`Напоминание запланировано на ${delaySeconds} сек.`:data.error||'Ошибка планирования');
+};
 
-// Получение события от других клиентов
-socket.on('taskAdded', (task) => {
-    console.log('Задача от другого клиента:', task);
-    const notification = document.createElement('div');
-    notification.textContent = `Новая задача: ${task.text}`;
-    notification.style.cssText = `
-        position: fixed; top: 10px; right: 10px;
-        background: #4285f4; color: white; padding: 1rem;
-        border-radius: 5px; z-index: 1000;
-    `;
-    document.body.appendChild(notification);
-    setTimeout(() => notification.remove(), 3000);
+document.querySelectorAll('.preset').forEach(btn=>{
+  btn.onclick=()=>{$('delayInput').value=btn.dataset.sec};
 });
 
-// Регистрация Service Worker и настройка push-уведомлений
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-        try {
-            const reg = await navigator.serviceWorker.register('/sw.js');
-            console.log('SW registered');
+$('loadMain').onclick=async()=>{
+  const html=await fetch('/content/main.html').then(r=>r.text()).catch(()=>'<p>Контент недоступен</p>');
+  $('contentBox').innerHTML=html;
+};
 
-            const enableBtn = document.getElementById('enable-push');
-            const disableBtn = document.getElementById('disable-push');
+const quotes=['Сделай маленький шаг сейчас.','Лучшее время — сегодня.','Задача проще, когда она записана.','Не идеально, зато работает.'];
+$('quote').textContent=quotes[Math.floor(Math.random()*quotes.length)];
 
-            if (enableBtn && disableBtn) {
-                const subscription = await reg.pushManager.getSubscription();
-                if (subscription) {
-                    enableBtn.style.display = 'none';
-                    disableBtn.style.display = 'inline-block';
-                }
-
-                enableBtn.addEventListener('click', async () => {
-                    if (Notification.permission === 'denied') {
-                        alert('Уведомления запрещены. Разрешите их в настройках браузера.');
-                        return;
-                    }
-                    if (Notification.permission === 'default') {
-                        const permission = await Notification.requestPermission();
-                        if (permission !== 'granted') {
-                            alert('Необходимо разрешить уведомления.');
-                            return;
-                        }
-                    }
-                    await subscribeToPush();
-                    enableBtn.style.display = 'none';
-                    disableBtn.style.display = 'inline-block';
-                });
-
-                disableBtn.addEventListener('click', async () => {
-                    await unsubscribeFromPush();
-                    disableBtn.style.display = 'none';
-                    enableBtn.style.display = 'inline-block';
-                });
-            }
-        } catch (err) {
-            console.log('SW registration failed:', err);
-        }
-    });
-}
+registerSW();
+render();
